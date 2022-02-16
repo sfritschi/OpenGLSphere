@@ -192,7 +192,6 @@ int main(int argc, char *argv[]) {
 	glEnable(GL_DEPTH_TEST);
 	
 	// Initialize data
-	// Cube vertices (8)
 	Vertex vertices[N_VERTICES] = {
 		// Front face (green)
 		(Vertex){.pos = {-0.5f, -0.5f, -1.0f}, .col = {0.1f, 0.8f, 0.6f}},
