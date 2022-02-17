@@ -14,11 +14,12 @@ const GLchar *vertexShaderSource = R"glsl(
 #version 460 core
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aColor;
-layout (location = 3) in vec3 aNormal;
+layout (location = 2) in vec3 aNormal;
 
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
+uniform mat4 normalMatrix;
 
 out vec3 vertexColor;
 out vec3 vertexNormal;
@@ -28,7 +29,7 @@ void main() {
     gl_Position = projection * view * model * vec4(aPos, 1.0);
     fragPos = vec3(model * vec4(aPos, 1.0));
     vertexColor = aColor;
-    vertexNormal = aNormal;
+    vertexNormal = vec3(normalMatrix * vec4(aNormal, 0.0));
 }
 )glsl";
 
@@ -41,8 +42,32 @@ in vec3 vertexColor;
 in vec3 vertexNormal;
 in vec3 fragPos;
 
+uniform vec3 lightPos;
+uniform vec3 viewPos;
+
 void main() {
-    fragColor = vec4(vertexColor, 1.0);
+    vec3 lightColor = vec3(1.0, 1.0, 1.0);
+    
+    vec3 lightDir = normalize(lightPos - fragPos);
+    // ambient lighting
+    float ambient = 0.1;
+    vec3 ambientColor = ambient * lightColor;
+    
+    // diffuse lighting
+    float diffuse = max(dot(lightDir, vertexNormal), 0.0);
+    vec3 diffuseColor = diffuse * lightColor;
+    
+    // specular lighting
+    float specularStrength = 0.5;
+    
+    vec3 viewDir = normalize(viewPos - fragPos);
+    vec3 reflectDir = reflect(-lightDir, vertexNormal);
+    float specular = pow(max(dot(viewDir, reflectDir), 0.0), 32);
+    vec3 specularColor = specular * specularStrength * lightColor;
+    
+    // Final result
+    vec3 result = (ambientColor + diffuseColor + specularColor) * vertexColor;
+    fragColor = vec4(result, 1.0);
 }
 )glsl";
 
@@ -72,18 +97,31 @@ void draw() {
 void rotateModel(GLfloat angle) {
 	// Get uniform location of model matrix
 	GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
+	// Get uniform location of normal matrix
+	GLint normalLoc = glGetUniformLocation(shaderProgram, "normalMatrix");
 	// Store current model matrix in mat4 variable
 	mat4 model;
 	glGetUniformfv(shaderProgram, modelLoc, (GLfloat *)model);
+	// Store current normal matrix
+	mat4 normalMatrix;
+	glGetUniformfv(shaderProgram, normalLoc, (GLfloat *)normalMatrix);
 	// Translate to origin
 	glm_translate_z(model, -1.5f);
+	// Rotation matrix
+	mat4 rot = GLM_MAT4_IDENTITY_INIT;
 	// Rotate current model matrix by 'angle' degrees
-	glm_rotate_y(model, glm_rad(angle), model);
-	glm_rotate_x(model, glm_rad(angle), model);
+	glm_rotate_y(rot, glm_rad(angle), rot);
+	glm_rotate_x(rot, glm_rad(angle), rot);
+	// Multiply model matrix by rotation matrix
+	glm_mat4_mul(model, rot, model);
+	// Multiply normalMatrix by rotation matrix
+	glm_mat4_mul(normalMatrix, rot, normalMatrix);
 	// Translate back
 	glm_translate_z(model, 1.5f);
 	// Update model matrix
 	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (GLfloat *)model);
+	// Update normal matrix to be the current rotation matrix
+	glUniformMatrix4fv(normalLoc, 1, GL_FALSE, (GLfloat *)normalMatrix);
 }
 
 GLuint64 getCurrentTime() {
@@ -166,19 +204,42 @@ void initScene() {
     // Manage scene
 	mat4 model = GLM_MAT4_IDENTITY_INIT;  // identity
 	mat4 view  = GLM_MAT4_IDENTITY_INIT;
+    mat4 normalMatrix = GLM_MAT4_IDENTITY_INIT;
+    
+    // Initialize camera & light source position
+    vec3 cameraPos = {0.0f, 0.0f, 0.0f};  // origin
+    vec3 cameraDir = {0.0f, 0.0f, -1.0f};  // direction camera is looking in
+    vec3 cameraUp  = {0.0f, 1.0f, 0.0f};
+    
+    vec3 lightPos = {0.0f, 2.0f, 1.0f};  // 1 unit above camera
+    
+    // Set camera & light position in shader
+    GLint cameraLoc = glGetUniformLocation(shaderProgram, "viewPos");
+    glUniform3fv(cameraLoc, 1, (GLfloat *)cameraPos);
+    
+    GLint lightLoc = glGetUniformLocation(shaderProgram, "lightPos");
+    glUniform3fv(lightLoc, 1, (GLfloat *)lightPos);
+    
+    // Modify view matrix to fix camera
+    glm_look(cameraPos, cameraDir, cameraUp, view);
     
 	GLfloat width = glutGet(GLUT_WINDOW_WIDTH);
 	GLfloat height = glutGet(GLUT_WINDOW_HEIGHT);
 	mat4 proj;
     glm_perspective(glm_rad(90.0f), width / height, 0.5f, 200.0f, proj); 
 	
-    // Set model, view and projection matrices
+    // Set model, view, projection and normal matrices
 	GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
 	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (GLfloat *)model);
+	
 	GLint viewLoc  = glGetUniformLocation(shaderProgram, "view");
 	glUniformMatrix4fv(viewLoc, 1, GL_FALSE, (GLfloat *)view);
+	
 	GLint projLoc  = glGetUniformLocation(shaderProgram, "projection");
 	glUniformMatrix4fv(projLoc, 1, GL_FALSE, (GLfloat *)proj);
+	
+	GLint normLoc = glGetUniformLocation(shaderProgram, "normalMatrix");
+	glUniformMatrix4fv(normLoc, 1, GL_FALSE, (GLfloat *)normalMatrix);
 }
 
 int main(int argc, char *argv[]) {
@@ -195,7 +256,7 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "Error: %s\n", glewGetErrorString(err));
 		exit(EXIT_FAILURE);	
 	}
-	glClearColor(0.8, 0.8, 0.8, 1.0);
+	glClearColor(0.4, 0.4, 0.4, 1.0);
 	glEnable(GL_DEPTH_TEST);
 	
 	// Initialize vertex data
@@ -319,7 +380,7 @@ int main(int argc, char *argv[]) {
 	glDeleteShader(fragShader);
 	
 	// Initialize scene
-	initScene();
+	initScene(shaderProgram);
 	
 	// Initialize starting time
 	last = getCurrentTime();
