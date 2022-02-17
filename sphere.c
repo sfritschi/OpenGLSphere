@@ -94,7 +94,7 @@ void draw() {
     glutSwapBuffers();
 }
 
-void rotateModel(GLfloat angle) {
+void rotateCube(GLfloat angle) {
 	// Get uniform location of model matrix
 	GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
 	// Get uniform location of normal matrix
@@ -142,7 +142,7 @@ void idleRotate() {
 	// Rotation angle
 	const GLfloat angle = speed * (GLfloat)deltaT;
 	// Rotate scene
-	rotateModel(angle);
+	rotateCube(angle);
 	// Redisplay scene
 	glutPostRedisplay(); 
 }
@@ -380,7 +380,7 @@ int main(int argc, char *argv[]) {
 	glDeleteShader(fragShader);
 	
 	// Initialize scene
-	initScene(shaderProgram);
+	initScene();
 	
 	// Initialize starting time
 	last = getCurrentTime();
