@@ -10,8 +10,8 @@
 
 #define MAX_INFO 512
 // Sphere properties
-#define N_STACKS 64
-#define N_SECTORS 64
+#define N_STACKS 80
+#define N_SECTORS 80
 #define N_VERTICES ((N_STACKS + 1) * (N_SECTORS + 1))
 #define N_INDICES (6 * N_SECTORS + 6 * (N_STACKS - 2) * N_SECTORS)
 
@@ -277,12 +277,19 @@ void initSphereProp(Vertex *vertices, GLuint *indices,
 			x = xy * cosf(sectorAngle);
 			y = xy * sinf(sectorAngle);
 			
+			Vertex v;
+			v.pos[0] = x + cx; v.pos[1] = y + cy; v.pos[2] = z + cz;
+			// Set color based on stack angle
+			if (0.0f <= stackAngle) {
+				v.col[0] = 0.0f; v.col[1] = 0.0f; v.col[2] = 1.0f;  // blue
+			} else {
+				v.col[0] = 0.8f; v.col[1] = 0.2f; v.col[2] = 0.0f;  // orange
+			}
+			v.normal[0] = x * invLength; v.normal[1] =  y * invLength;
+			v.normal[2] = z * invLength;
+			
 			// Add current vertex
-			vertices[i * (N_SECTORS + 1) + j] = (Vertex) {
-				.pos = {x + cx, y + cy, z + cz},
-				.col = {1.0f, 0.0f, 0.0f},  // red
-				.normal = {x * invLength, y * invLength, z * invLength}
-			};
+			vertices[i * (N_SECTORS + 1) + j] = v;
 		}
 	}
 	
