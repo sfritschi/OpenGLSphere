@@ -6,8 +6,14 @@
 #include <stdio.h>
 #include <sys/time.h>  // gettimeofday
 #include <math.h>
+#include <assert.h>
 
 #define MAX_INFO 512
+// Sphere properties
+#define N_STACKS 64
+#define N_SECTORS 64
+#define N_VERTICES ((N_STACKS + 1) * (N_SECTORS + 1))
+#define N_INDICES (6 * N_SECTORS + 6 * (N_STACKS - 2) * N_SECTORS)
 
 // Source of vertex shader in glsl
 const GLchar *vertexShaderSource = R"glsl(
@@ -58,11 +64,11 @@ void main() {
     vec3 diffuseColor = diffuse * lightColor;
     
     // specular lighting
-    float specularStrength = 0.5;
+    float specularStrength = 0.8;
     
     vec3 viewDir = normalize(viewPos - fragPos);
     vec3 reflectDir = reflect(-lightDir, vertexNormal);
-    float specular = pow(max(dot(viewDir, reflectDir), 0.0), 32);
+    float specular = pow(max(dot(viewDir, reflectDir), 0.0), 128);
     vec3 specularColor = specular * specularStrength * lightColor;
     
     // Final result
@@ -88,13 +94,13 @@ void draw() {
     
     // Last argument specifies total number of vertices. Three consecutive
     // vertices are drawn as one triangle
-    glDrawElements(GL_TRIANGLES, nIndices, GL_UNSIGNED_SHORT, (void *)0);
+    glDrawElements(GL_TRIANGLES, N_INDICES, GL_UNSIGNED_INT, (void *)0);
         
     // Swap buffers and show the buffer's content on the screen
     glutSwapBuffers();
 }
 
-void rotateCube(GLfloat angle) {
+void rotateModel(GLfloat angle) {
 	// Get uniform location of model matrix
 	GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
 	// Get uniform location of normal matrix
@@ -142,7 +148,7 @@ void idleRotate() {
 	// Rotation angle
 	const GLfloat angle = speed * (GLfloat)deltaT;
 	// Rotate scene
-	rotateCube(angle);
+	rotateModel(angle);
 	// Redisplay scene
 	glutPostRedisplay(); 
 }
@@ -207,7 +213,7 @@ void initScene() {
     mat4 normalMatrix = GLM_MAT4_IDENTITY_INIT;
     
     // Initialize camera & light source position
-    vec3 cameraPos = {0.0f, 0.0f, 0.0f};  // origin
+    vec3 cameraPos = {0.0f, 0.0f, 1.0f};  // origin
     vec3 cameraDir = {0.0f, 0.0f, -1.0f};  // direction camera is looking in
     vec3 cameraUp  = {0.0f, 1.0f, 0.0f};
     
@@ -226,7 +232,7 @@ void initScene() {
 	GLfloat width = glutGet(GLUT_WINDOW_WIDTH);
 	GLfloat height = glutGet(GLUT_WINDOW_HEIGHT);
 	mat4 proj;
-    glm_perspective(glm_rad(90.0f), width / height, 0.5f, 200.0f, proj); 
+    glm_perspective(glm_rad(60.0f), width / height, 0.5f, 200.0f, proj); 
 	
     // Set model, view, projection and normal matrices
 	GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
@@ -240,6 +246,76 @@ void initScene() {
 	
 	GLint normLoc = glGetUniformLocation(shaderProgram, "normalMatrix");
 	glUniformMatrix4fv(normLoc, 1, GL_FALSE, (GLfloat *)normalMatrix);
+}
+
+// See http://www.songho.ca/opengl/gl_sphere.html for details
+void initSphereProp(Vertex *vertices, GLuint *indices, 
+	GLfloat radius, vec3 center) {
+	
+	GLfloat stackStep = GLM_PI / (GLfloat)N_STACKS;
+	GLfloat sectorStep = 2.0f * GLM_PI / (GLfloat)N_SECTORS;
+	GLfloat stackAngle, sectorAngle;
+	GLfloat invLength = 1.0f / radius;
+	
+	GLfloat x, y, z, xy;
+	GLfloat cx = center[0];
+	GLfloat cy = center[1];
+	GLfloat cz = center[2];
+	
+	// Initialize vertices
+	GLuint i, j;
+	for (i = 0; i <= N_STACKS; ++i) {
+		
+		stackAngle = GLM_PI / 2.0f - (GLfloat)i * stackStep;
+		xy = radius * cosf(stackAngle);
+		z  = radius * sinf(stackAngle);
+		
+		for (j = 0; j <= N_SECTORS; ++j) {
+			
+			sectorAngle = (GLfloat)j * sectorStep;
+			
+			x = xy * cosf(sectorAngle);
+			y = xy * sinf(sectorAngle);
+			
+			// Add current vertex
+			vertices[i * (N_SECTORS + 1) + j] = (Vertex) {
+				.pos = {x + cx, y + cy, z + cz},
+				.col = {1.0f, 0.0f, 0.0f},  // red
+				.normal = {x * invLength, y * invLength, z * invLength}
+			};
+		}
+	}
+	
+	// Initialize triangle indices
+	GLuint index = 0;
+	
+	GLuint k1, k2;
+	for (i = 0; i < N_STACKS; ++i) {
+		
+		k1 = i * (N_SECTORS + 1);  // beginning of current stack
+		k2 = k1 + N_SECTORS  + 1;  // beginning of next stack
+		
+		for (j = 0; j < N_SECTORS; ++j, ++k1, ++k2) {
+			
+			// 2 triangles per sector (excluding first and last stack)
+			// k1 => k2 => k1 + 1
+			if (i != 0) {
+				indices[index++] = k1;
+				indices[index++] = k2;
+				indices[index++] = k1 + 1;
+			}
+			
+			// k1 + 1 => k2 => k2 + 1
+			if (i != (N_STACKS - 1)) {
+				indices[index++] = k1 + 1;
+				indices[index++] = k2;
+				indices[index++] = k2 + 1;
+			}
+		}
+	}
+	
+	// DEBUG
+	assert(index == N_INDICES);
 }
 
 int main(int argc, char *argv[]) {
@@ -259,6 +335,8 @@ int main(int argc, char *argv[]) {
 	glClearColor(0.4, 0.4, 0.4, 1.0);
 	glEnable(GL_DEPTH_TEST);
 	
+	
+	/* Cube vertices/indices
 	// Initialize vertex data
 	Vertex vertices[] = {
 		// Front face (red)
@@ -294,7 +372,7 @@ int main(int argc, char *argv[]) {
 	};
 	
 	// Triangle indices
-	GLushort indices[] = {
+	GLuint indices[] = {
 		// Front face
 		0, 1, 2,
 		0, 2, 3,
@@ -316,7 +394,12 @@ int main(int argc, char *argv[]) {
 	};
 	// Set total number of indices
 	nIndices = sizeof(indices) / sizeof(GLushort);
+	*/
+	// Initialize vertex attributes and indices for sphere
+	Vertex vertices[N_VERTICES];
+	GLuint indices[N_INDICES];
 	
+	initSphereProp(vertices, indices, 1.0f, (vec3){0.0f, 0.0f, -1.5f});
 	// Initialize vertex buffer object
 	GLuint vboVert = initVBO((void *)vertices, GL_ARRAY_BUFFER, sizeof(vertices));
 	
