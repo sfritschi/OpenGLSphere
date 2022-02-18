@@ -8,6 +8,8 @@
 #include <math.h>
 #include <assert.h>
 
+#include <png.h>  // load .png texture image
+
 #define MAX_INFO 512
 // Sphere properties
 #define N_STACKS 80
@@ -86,16 +88,39 @@ typedef struct {
 
 // GLOBALS
 GLuint shaderProgram;
-GLsizei nIndices = 0;
+GLuint vaoVert, vaoFloor;
+GLsizei nFloorIndices = 0;
 GLuint64 last;
+vec3 sphereCenter = {0.0f, 0.0f, -1.5f};
+
+void pushModel(mat4 in, mat4 *out) {
+	// Get uniform location of model matrix
+	GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
+	// Return previous model matrix
+	if (out != NULL) {
+		glGetUniformfv(shaderProgram, modelLoc, (GLfloat *)(*out));
+	}
+	// Update model matrix
+	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (GLfloat *)in);	
+}
 
 void draw() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
     // Last argument specifies total number of vertices. Three consecutive
     // vertices are drawn as one triangle
+    glBindVertexArray(vaoVert);
     glDrawElements(GL_TRIANGLES, N_INDICES, GL_UNSIGNED_INT, (void *)0);
-        
+    
+    // Set model matrix back to identity
+    //mat4 previous;
+    //pushModel(GLM_MAT4_IDENTITY, &previous);
+    
+    glBindVertexArray(vaoFloor);
+    glDrawElements(GL_TRIANGLES, nFloorIndices, GL_UNSIGNED_INT, (void *)0);
+    // Reset model matrix to original value
+    //pushModel(previous, NULL);
+    
     // Swap buffers and show the buffer's content on the screen
     glutSwapBuffers();
 }
@@ -130,6 +155,35 @@ void rotateModel(GLfloat angle) {
 	glUniformMatrix4fv(normalLoc, 1, GL_FALSE, (GLfloat *)normalMatrix);
 }
 
+void rotateCamera(GLfloat angle) {
+	// Fetch current camera position
+	vec3 cameraPos;
+	vec3 cameraUp = {0.0f, 1.0f, 0.0f};  // stays the same
+	vec3 cameraDir;
+	
+	GLint cameraLoc = glGetUniformLocation(shaderProgram, "viewPos");
+    glGetUniformfv(shaderProgram, cameraLoc, (GLfloat *)cameraPos);
+    
+    // Rotate camera position around y-axis (origin of sphere)
+    glm_vec3_sub(cameraPos, sphereCenter, cameraPos);  // translate
+    glm_vec3_rotate(cameraPos, angle, (vec3){0.0f, 1.0f, 0.0f});
+    glm_vec3_add(cameraPos, sphereCenter, cameraPos);  // translate back
+    // Update camera position
+    glUniform3fv(cameraLoc, 1, (GLfloat *)cameraPos);
+    
+    // Camera direction always points to center of sphere
+    glm_vec3_sub(sphereCenter, cameraPos, cameraDir);
+    // Normalize direction
+    glm_vec3_normalize(cameraDir);
+    
+    // Update view matrix
+    mat4 view;
+    GLint viewLoc = glGetUniformLocation(shaderProgram, "view");
+    glm_look(cameraPos, cameraDir, cameraUp, view);
+    
+    glUniformMatrix4fv(viewLoc, 1, GL_FALSE, (GLfloat *)view);
+}
+
 GLuint64 getCurrentTime() {
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
@@ -144,11 +198,13 @@ void idleRotate() {
 	// Update last time
 	last = now;
 	// Rotation speed (45 deg / s = 0.045 deg / ms)
-	const GLfloat speed = 0.0225f;
+	const GLfloat speed = 0.0001f;
 	// Rotation angle
 	const GLfloat angle = speed * (GLfloat)deltaT;
 	// Rotate scene
-	rotateModel(angle);
+	//rotateModel(angle);
+	// Rotate camera
+	rotateCamera(angle);
 	// Redisplay scene
 	glutPostRedisplay(); 
 }
@@ -213,11 +269,11 @@ void initScene() {
     mat4 normalMatrix = GLM_MAT4_IDENTITY_INIT;
     
     // Initialize camera & light source position
-    vec3 cameraPos = {0.0f, 0.0f, 1.0f};  // origin
+    vec3 cameraPos = {0.0f, 0.0f, 2.0f};
     vec3 cameraDir = {0.0f, 0.0f, -1.0f};  // direction camera is looking in
     vec3 cameraUp  = {0.0f, 1.0f, 0.0f};
     
-    vec3 lightPos = {0.0f, 2.0f, 1.0f};  // 1 unit above camera
+    vec3 lightPos = {0.0f, 1.0f, -4.5f};
     
     // Set camera & light position in shader
     GLint cameraLoc = glGetUniformLocation(shaderProgram, "viewPos");
@@ -278,13 +334,15 @@ void initSphereProp(Vertex *vertices, GLuint *indices,
 			y = xy * sinf(sectorAngle);
 			
 			Vertex v;
+			// Set position of generated vertex
 			v.pos[0] = x + cx; v.pos[1] = y + cy; v.pos[2] = z + cz;
 			// Set color based on stack angle
 			if (0.0f <= stackAngle) {
 				v.col[0] = 0.0f; v.col[1] = 0.0f; v.col[2] = 1.0f;  // blue
 			} else {
-				v.col[0] = 0.8f; v.col[1] = 0.2f; v.col[2] = 0.0f;  // orange
+				v.col[0] = 1.0f; v.col[1] = 165.0f / 255.0f; v.col[2] = 0.0f;  // orange
 			}
+			// Set normal vector for this vertex
 			v.normal[0] = x * invLength; v.normal[1] =  y * invLength;
 			v.normal[2] = z * invLength;
 			
@@ -339,9 +397,8 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "Error: %s\n", glewGetErrorString(err));
 		exit(EXIT_FAILURE);	
 	}
-	glClearColor(0.4, 0.4, 0.4, 1.0);
+	glClearColor(0.2, 0.2, 0.2, 1.0);
 	glEnable(GL_DEPTH_TEST);
-	
 	
 	/* Cube vertices/indices
 	// Initialize vertex data
@@ -406,9 +463,25 @@ int main(int argc, char *argv[]) {
 	Vertex vertices[N_VERTICES];
 	GLuint indices[N_INDICES];
 	
-	initSphereProp(vertices, indices, 1.0f, (vec3){0.0f, 0.0f, -1.5f});
+	initSphereProp(vertices, indices, 1.0f, sphereCenter);
+	
+	// Initialize vertices of floor
+	Vertex floorVert[] = {
+		(Vertex){.pos = {-1.0f, -1.0f, 0.0f}, .col = {0.9f, 0.9f, 0.9f}, .normal = {0.0f, 1.0f, 0.0f}},
+		(Vertex){.pos = {1.0f, -1.0f,  0.0f}, .col = {0.9f, 0.9f, 0.9f}, .normal = {0.0f, 1.0f, 0.0f}},
+		(Vertex){.pos = {1.0f, -1.0f, -3.0f}, .col = {0.9f, 0.9f, 0.9f}, .normal = {0.0f, 1.0f, 0.0f}},
+		(Vertex){.pos = {-1.0f, -1.0f, -3.0f}, .col = {0.9f, 0.9f, 0.9f}, .normal = {0.0f, 1.0f, 0.0f}},
+	};
+	// Triangle indices of floor
+	GLuint floorInd[] = {
+		0, 1, 2,
+		0, 2, 3
+	};
+	nFloorIndices = sizeof(floorInd) / sizeof(GLuint);
+	
 	// Initialize vertex buffer object
 	GLuint vboVert = initVBO((void *)vertices, GL_ARRAY_BUFFER, sizeof(vertices));
+	GLuint vboFloor = initVBO((void *)floorVert, GL_ARRAY_BUFFER, sizeof(floorVert));
 	
 	// Create shader program
 	GLuint vertShader = createShader(GL_VERTEX_SHADER, vertexShaderSource);
@@ -440,13 +513,14 @@ int main(int argc, char *argv[]) {
 	}
 	
 	// Initialize vertex array object
-	GLuint vaoVert;
 	glGenVertexArrays(1, &vaoVert);
+	glGenVertexArrays(1, &vaoFloor);
 	
 	// Initialize index buffer object (element array)
-	GLuint vboInd;
+	GLuint vboInd, vboFloorInd;
 	glGenBuffers(1, &vboInd);
-		
+	glGenBuffers(1, &vboFloorInd);
+	
 	glBindVertexArray(vaoVert);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vboInd);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), 
@@ -460,6 +534,16 @@ int main(int argc, char *argv[]) {
 	enableVertAttrib(vboVert, size, stride, 1, (void *)offsetof(Vertex, col));
 	// Enable vertex normal attribute
 	enableVertAttrib(vboVert, size, stride, 2, (void *)offsetof(Vertex, normal));
+	
+	glBindVertexArray(vaoFloor);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vboFloorInd);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(floorInd),
+		(void *)floorInd, GL_STATIC_DRAW);
+	
+	// Enable vertex attributes of floor
+	enableVertAttrib(vboFloor, size, stride, 0, (void *)offsetof(Vertex, pos));
+	enableVertAttrib(vboFloor, size, stride, 1, (void *)offsetof(Vertex, col));
+	enableVertAttrib(vboFloor, size, stride, 2, (void *)offsetof(Vertex, normal));
 	
 	// Start using shader program
 	glUseProgram(shaderProgram);
