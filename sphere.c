@@ -4,6 +4,7 @@
 #include <cglm/cglm.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/time.h>  // gettimeofday
 #include <math.h>
 #include <assert.h>
@@ -12,8 +13,8 @@
 
 #define MAX_INFO 512
 // Sphere properties
-#define N_STACKS 80
-#define N_SECTORS 80
+#define N_STACKS 64
+#define N_SECTORS 64
 #define N_VERTICES ((N_STACKS + 1) * (N_SECTORS + 1))
 #define N_INDICES (6 * N_SECTORS + 6 * (N_STACKS - 2) * N_SECTORS)
 
@@ -89,9 +90,13 @@ typedef struct {
 // GLOBALS
 GLuint shaderProgram;
 GLuint vaoVert, vaoFloor;
-GLsizei nFloorIndices = 0;
+GLsizei nFloorVertices = 0;
 GLuint64 last;
 vec3 sphereCenter = {0.0f, 0.0f, -1.5f};
+
+GLfloat min(GLfloat a, GLfloat b) {
+	return (a < b) ? a : b;
+}
 
 void pushModel(mat4 in, mat4 *out) {
 	// Get uniform location of model matrix
@@ -117,7 +122,7 @@ void draw() {
     //pushModel(GLM_MAT4_IDENTITY, &previous);
     
     glBindVertexArray(vaoFloor);
-    glDrawElements(GL_TRIANGLES, nFloorIndices, GL_UNSIGNED_INT, (void *)0);
+    glDrawArrays(GL_TRIANGLES, 0, nFloorVertices);
     // Reset model matrix to original value
     //pushModel(previous, NULL);
     
@@ -273,7 +278,7 @@ void initScene() {
     vec3 cameraDir = {0.0f, 0.0f, -1.0f};  // direction camera is looking in
     vec3 cameraUp  = {0.0f, 1.0f, 0.0f};
     
-    vec3 lightPos = {0.0f, 1.0f, -4.5f};
+    vec3 lightPos = {0.0f, 10.0f, -1.5f};
     
     // Set camera & light position in shader
     GLint cameraLoc = glGetUniformLocation(shaderProgram, "viewPos");
@@ -333,21 +338,12 @@ void initSphereProp(Vertex *vertices, GLuint *indices,
 			x = xy * cosf(sectorAngle);
 			y = xy * sinf(sectorAngle);
 			
-			Vertex v;
-			// Set position of generated vertex
-			v.pos[0] = x + cx; v.pos[1] = y + cy; v.pos[2] = z + cz;
-			// Set color based on stack angle
-			if (0.0f <= stackAngle) {
-				v.col[0] = 0.0f; v.col[1] = 0.0f; v.col[2] = 1.0f;  // blue
-			} else {
-				v.col[0] = 1.0f; v.col[1] = 165.0f / 255.0f; v.col[2] = 0.0f;  // orange
-			}
-			// Set normal vector for this vertex
-			v.normal[0] = x * invLength; v.normal[1] =  y * invLength;
-			v.normal[2] = z * invLength;
-			
 			// Add current vertex
-			vertices[i * (N_SECTORS + 1) + j] = v;
+			vertices[i * (N_SECTORS + 1) + j] = (Vertex) {
+				.pos = {x + cx, y + cy, z + cz},
+				.col = {1.0f, 165.0f/255.0f, 0.0f},  // orange
+				.normal = {x * invLength, y * invLength, z * invLength}
+			};
 		}
 	}
 	
@@ -383,6 +379,132 @@ void initSphereProp(Vertex *vertices, GLuint *indices,
 	assert(index == N_INDICES);
 }
 
+void initFloorProp(Vertex **vertices, GLfloat spacing,
+	vec2 start, vec2 end, GLfloat height, GLsizei *nVertices) {
+	
+	// Make sure nVertices and nIndices are not NULL
+	assert(nVertices != NULL);
+	// Make sure spacing is non-zero
+	assert(spacing > 0.0f);
+	// Make sure start & end correspond to bottom left and top right
+	// corner respectively
+	assert(start[0] < end[0] && start[1] < end[1]);
+	
+	// Length of floor in x/z direction
+	const GLfloat lx = end[0] - start[0];
+	const GLfloat lz = end[1] - start[1];
+	// Number of vertices of floor in x/z direction
+	const GLuint Nx = ceilf(lx / spacing) + 1;
+	const GLuint Nz = ceilf(lz / spacing) + 1;
+	const GLuint nTiles = (Nx - 1) * (Nz - 1);
+	
+	// Set number of vertices (2 triangles @ 6 vertices per tile)
+	*nVertices = 6 * nTiles;
+	
+	GLuint ix, iz;
+	
+	// Allocate necessary memory
+	*vertices = (Vertex *) malloc((*nVertices) * sizeof(Vertex));
+	assert(*vertices != NULL);
+	
+	GLuint tileIndex = 0, vertexIndex = 0;
+	GLfloat x, z, nextX, nextZ;
+	// Initialize vertices
+	for (iz = 0; iz < Nz - 1; ++iz) {
+		
+		z = min(iz * spacing + start[1], end[1]);
+		nextZ = min(z + spacing, end[1]);
+		
+		for (ix = 0; ix < Nx - 1; ++ix) {
+			
+			x = min(ix * spacing + start[0], end[0]);
+			nextX = min(x + spacing, end[0]);
+			
+			// Alternate color every other tile
+			if (tileIndex % 2 == 0) {  // white color
+				// bottom left corner
+				(*vertices)[vertexIndex++] = (Vertex) {
+					.pos = {x, height, z},
+					.col = {1.0f, 1.0f, 1.0f},
+					.normal = {0.0f, 1.0f, 0.0f}
+				};
+				// bottom right corner
+				(*vertices)[vertexIndex++] = (Vertex) {
+					.pos = {nextX, height, z},
+					.col = {1.0f, 1.0f, 1.0f},
+					.normal = {0.0f, 1.0f, 0.0f}
+				};
+				// top right corner
+				(*vertices)[vertexIndex++] = (Vertex) {
+					.pos = {nextX, height, nextZ},
+					.col = {1.0f, 1.0f, 1.0f},
+					.normal = {0.0f, 1.0f, 0.0f}
+				};
+				// bottom left corner
+				(*vertices)[vertexIndex++] = (Vertex) {
+					.pos = {x, height, z},
+					.col = {1.0f, 1.0f, 1.0f},
+					.normal = {0.0f, 1.0f, 0.0f}
+				};
+				// top right corner
+				(*vertices)[vertexIndex++] = (Vertex) {
+					.pos = {nextX, height, nextZ},
+					.col = {1.0f, 1.0f, 1.0f},
+					.normal = {0.0f, 1.0f, 0.0f}
+				};
+				// top left corner
+				(*vertices)[vertexIndex++] = (Vertex) {
+					.pos = {x, height, nextZ},
+					.col = {1.0f, 1.0f, 1.0f},
+					.normal = {0.0f, 1.0f, 0.0f}
+				};
+			} else {  // black color
+				// bottom left corner
+				(*vertices)[vertexIndex++] = (Vertex) {
+					.pos = {x, height, z},
+					.col = {0.0f, 0.0f, 0.0f},
+					.normal = {0.0f, 1.0f, 0.0f}
+				};
+				// bottom right corner
+				(*vertices)[vertexIndex++] = (Vertex) {
+					.pos = {nextX, height, z},
+					.col = {0.0f, 0.0f, 0.0f},
+					.normal = {0.0f, 1.0f, 0.0f}
+				};
+				// top right corner
+				(*vertices)[vertexIndex++] = (Vertex) {
+					.pos = {nextX, height, nextZ},
+					.col = {0.0f, 0.0f, 0.0f},
+					.normal = {0.0f, 1.0f, 0.0f}
+				};
+				// bottom left corner
+				(*vertices)[vertexIndex++] = (Vertex) {
+					.pos = {x, height, z},
+					.col = {0.0f, 0.0f, 0.0f},
+					.normal = {0.0f, 1.0f, 0.0f}
+				};
+				// top right corner
+				(*vertices)[vertexIndex++] = (Vertex) {
+					.pos = {nextX, height, nextZ},
+					.col = {0.0f, 0.0f, 0.0f},
+					.normal = {0.0f, 1.0f, 0.0f}
+				};
+				// top left corner
+				(*vertices)[vertexIndex++] = (Vertex) {
+					.pos = {x, height, nextZ},
+					.col = {0.0f, 0.0f, 0.0f},
+					.normal = {0.0f, 1.0f, 0.0f}
+				};
+			}
+			
+			// Increment counter
+			++tileIndex;
+		}
+		// Increment again to offset next row
+		++tileIndex;
+	}
+}
+
 int main(int argc, char *argv[]) {
 	
 	glutInit(&argc, argv);
@@ -399,66 +521,8 @@ int main(int argc, char *argv[]) {
 	}
 	glClearColor(0.2, 0.2, 0.2, 1.0);
 	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_MULTISAMPLE);
 	
-	/* Cube vertices/indices
-	// Initialize vertex data
-	Vertex vertices[] = {
-		// Front face (red)
-		(Vertex){.pos = {-0.5f, -0.5f, -1.0f}, .col = {1.0f, 0.0f, 0.0f}, .normal = {0.0f, 0.0f, 1.0f}},
-		(Vertex){.pos = {0.5f, -0.5f, -1.0f}, .col = {1.0f, 0.0f, 0.0f}, .normal = {0.0f, 0.0f, 1.0f}},
-		(Vertex){.pos = {0.5f, 0.5f, -1.0f}, .col = {1.0f, 0.0f, 0.0f}, .normal = {0.0f, 0.0f, 1.0f}},
-		(Vertex){.pos = {-0.5f, 0.5f, -1.0f}, .col = {1.0f, 0.0f, 0.0f}, .normal = {0.0f, 0.0f, 1.0f}},
-		// Back face (green)
-		(Vertex){.pos = {-0.5f, -0.5f, -2.0f}, .col = {0.0f, 1.0f, 0.0f}, .normal = {0.0f, 0.0f, -1.0f}},
-		(Vertex){.pos = {0.5f, -0.5f, -2.0f}, .col = {0.0f, 1.0f, 0.0f}, .normal = {0.0f, 0.0f, -1.0f}},
-		(Vertex){.pos = {0.5f, 0.5f, -2.0f}, .col = {0.0f, 1.0f, 0.0f}, .normal = {0.0f, 0.0f, -1.0f}},
-		(Vertex){.pos = {-0.5f, 0.5f, -2.0f}, .col = {0.0f, 1.0f, 0.0f}, .normal = {0.0f, 0.0f, -1.0f}},
-		// Bottom face (blue)
-		(Vertex){.pos = {-0.5f, -0.5f, -1.0f}, .col = {0.0f, 0.0f, 1.0f}, .normal = {0.0f, -1.0f, 0.0f}},
-		(Vertex){.pos = {0.5f, -0.5f, -1.0f}, .col = {0.0f, 0.0f, 1.0f}, .normal = {0.0f, -1.0f, 0.0f}},
-		(Vertex){.pos = {0.5f, -0.5f, -2.0f}, .col = {0.0f, 0.0f, 1.0f}, .normal = {0.0f, -1.0f, 0.0f}},
-		(Vertex){.pos = {-0.5f, -0.5f, -2.0f}, .col = {0.0f, 0.0f, 1.0f}, .normal = {0.0f, -1.0f, 0.0f}},
-		// Top face (yellow)
-		(Vertex){.pos = {-0.5f, 0.5f, -1.0f}, .col = {1.0f, 1.0f, 0.0f}, .normal = {0.0f, 1.0f, 0.0f}},
-		(Vertex){.pos = {0.5f, 0.5f, -1.0f}, .col = {1.0f, 1.0f, 0.0f}, .normal = {0.0f, 1.0f, 0.0f}},
-		(Vertex){.pos = {0.5f, 0.5f, -2.0f}, .col = {1.0f, 1.0f, 0.0f}, .normal = {0.0f, 1.0f, 0.0f}},
-		(Vertex){.pos = {-0.5f, 0.5f, -2.0f}, .col = {1.0f, 1.0f, 0.0f}, .normal = {0.0f, 1.0f, 0.0f}},
-		// Left face (magenta)
-		(Vertex){.pos = {-0.5f, -0.5f, -2.0f}, .col = {1.0f, 0.0f, 1.0f}, .normal = {-1.0f, 0.0f, 0.0f}},
-		(Vertex){.pos = {-0.5f, -0.5f, -1.0f}, .col = {1.0f, 0.0f, 1.0f}, .normal = {-1.0f, 0.0f, 0.0f}},
-		(Vertex){.pos = {-0.5f, 0.5f, -1.0f}, .col = {1.0f, 0.0f, 1.0f}, .normal = {-1.0f, 0.0f, 0.0f}},
-		(Vertex){.pos = {-0.5f, 0.5f, -2.0f}, .col = {1.0f, 0.0f, 1.0f}, .normal = {-1.0f, 0.0f, 0.0f}},
-		// Right face (cyan)
-		(Vertex){.pos = {0.5f, -0.5f, -2.0f}, .col = {0.0f, 1.0f, 1.0f}, .normal = {1.0f, 0.0f, 0.0f}},
-		(Vertex){.pos = {0.5f, -0.5f, -1.0f}, .col = {0.0f, 1.0f, 1.0f}, .normal = {1.0f, 0.0f, 0.0f}},
-		(Vertex){.pos = {0.5f, 0.5f, -1.0f}, .col = {0.0f, 1.0f, 1.0f}, .normal = {1.0f, 0.0f, 0.0f}},
-		(Vertex){.pos = {0.5f, 0.5f, -2.0f}, .col = {0.0f, 1.0f, 1.0f}, .normal = {1.0f, 0.0f, 0.0f}}
-	};
-	
-	// Triangle indices
-	GLuint indices[] = {
-		// Front face
-		0, 1, 2,
-		0, 2, 3,
-		// Back face
-		4, 5, 6,
-		4, 6, 7,
-		// Bottom face
-		8, 9, 10,
-		8, 10, 11,
-		// Top face
-		12, 13, 14,
-		12, 14, 15,
-		// Left face
-		16, 17, 18,
-		16, 18, 19,
-		// Right face
-		20, 21, 22,
-		20, 22, 23
-	};
-	// Set total number of indices
-	nIndices = sizeof(indices) / sizeof(GLushort);
-	*/
 	// Initialize vertex attributes and indices for sphere
 	Vertex vertices[N_VERTICES];
 	GLuint indices[N_INDICES];
@@ -466,22 +530,14 @@ int main(int argc, char *argv[]) {
 	initSphereProp(vertices, indices, 1.0f, sphereCenter);
 	
 	// Initialize vertices of floor
-	Vertex floorVert[] = {
-		(Vertex){.pos = {-1.0f, -1.0f, 0.0f}, .col = {0.9f, 0.9f, 0.9f}, .normal = {0.0f, 1.0f, 0.0f}},
-		(Vertex){.pos = {1.0f, -1.0f,  0.0f}, .col = {0.9f, 0.9f, 0.9f}, .normal = {0.0f, 1.0f, 0.0f}},
-		(Vertex){.pos = {1.0f, -1.0f, -3.0f}, .col = {0.9f, 0.9f, 0.9f}, .normal = {0.0f, 1.0f, 0.0f}},
-		(Vertex){.pos = {-1.0f, -1.0f, -3.0f}, .col = {0.9f, 0.9f, 0.9f}, .normal = {0.0f, 1.0f, 0.0f}},
-	};
-	// Triangle indices of floor
-	GLuint floorInd[] = {
-		0, 1, 2,
-		0, 2, 3
-	};
-	nFloorIndices = sizeof(floorInd) / sizeof(GLuint);
+	Vertex *floorVert = NULL;
+	
+	initFloorProp(&floorVert, 0.5f, (vec2){-6.0f, -7.5f},
+		(vec2){6.0f, 4.5f}, -1.0f, &nFloorVertices);
 	
 	// Initialize vertex buffer object
 	GLuint vboVert = initVBO((void *)vertices, GL_ARRAY_BUFFER, sizeof(vertices));
-	GLuint vboFloor = initVBO((void *)floorVert, GL_ARRAY_BUFFER, sizeof(floorVert));
+	GLuint vboFloor = initVBO((void *)floorVert, GL_ARRAY_BUFFER, nFloorVertices * sizeof(Vertex));
 	
 	// Create shader program
 	GLuint vertShader = createShader(GL_VERTEX_SHADER, vertexShaderSource);
@@ -517,9 +573,8 @@ int main(int argc, char *argv[]) {
 	glGenVertexArrays(1, &vaoFloor);
 	
 	// Initialize index buffer object (element array)
-	GLuint vboInd, vboFloorInd;
+	GLuint vboInd;
 	glGenBuffers(1, &vboInd);
-	glGenBuffers(1, &vboFloorInd);
 	
 	glBindVertexArray(vaoVert);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vboInd);
@@ -536,14 +591,14 @@ int main(int argc, char *argv[]) {
 	enableVertAttrib(vboVert, size, stride, 2, (void *)offsetof(Vertex, normal));
 	
 	glBindVertexArray(vaoFloor);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vboFloorInd);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(floorInd),
-		(void *)floorInd, GL_STATIC_DRAW);
 	
 	// Enable vertex attributes of floor
 	enableVertAttrib(vboFloor, size, stride, 0, (void *)offsetof(Vertex, pos));
 	enableVertAttrib(vboFloor, size, stride, 1, (void *)offsetof(Vertex, col));
 	enableVertAttrib(vboFloor, size, stride, 2, (void *)offsetof(Vertex, normal));
+	
+	// Cleanup data associated with floor
+	free(floorVert);
 	
 	// Start using shader program
 	glUseProgram(shaderProgram);
