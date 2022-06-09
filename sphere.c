@@ -9,14 +9,12 @@
 #include <math.h>
 #include <assert.h>
 
-#include <png.h>  // load .png texture image
-
 #define MAX_INFO 512
 // Sphere properties
-#define N_STACKS 64
-#define N_SECTORS 64
+#define N_STACKS 32
+#define N_SECTORS 32
 #define N_VERTICES ((N_STACKS + 1) * (N_SECTORS + 1))
-#define N_INDICES (6 * N_SECTORS + 6 * (N_STACKS - 2) * N_SECTORS)
+#define N_INDICES (6 * N_SECTORS * (N_STACKS - 1))
 
 // Source of vertex shader in glsl
 const GLchar *vertexShaderSource = R"glsl(
@@ -88,6 +86,9 @@ typedef struct {
 } Vertex;
 
 // GLOBALS
+int mouseX, mouseY;
+GLfloat rotateX, rotateY;
+
 GLuint shaderProgram;
 GLuint vaoVert, vaoFloor;
 GLsizei nFloorVertices = 0;
@@ -128,6 +129,47 @@ void draw() {
     
     // Swap buffers and show the buffer's content on the screen
     glutSwapBuffers();
+}
+
+void mousePassive(GLint x, GLint y) {
+    mouseX = x;
+    mouseY = y;
+}
+
+void mouseMotion(int x, int y) {
+    const GLfloat speed = 0.1f;
+    rotateX = (GLfloat) (mouseY - y) * speed;
+    rotateY = (GLfloat) (mouseX - x) * speed;
+    mousePassive(x, y);  // update current mouse position
+    
+    // Rotate model & normal matrix
+    mat4 model, normalMat;
+    GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
+    GLint normalLoc = glGetUniformLocation(shaderProgram, "normalMatrix");
+    
+    glGetUniformfv(shaderProgram, modelLoc, (GLfloat *)model);
+    glGetUniformfv(shaderProgram, normalLoc, (GLfloat *)normalMat);
+    
+    // Translate model to origin (sphere)
+    glm_translate_z(model, -1.5f);
+    
+    // Create rotation matrix
+    mat4 rot = GLM_MAT4_IDENTITY_INIT;
+    glm_rotate_x(rot, glm_rad(rotateX), rot); 
+    glm_rotate_y(rot, glm_rad(rotateY), rot);
+    
+    // Multiply both model & normal matrix with rotation matrix
+    glm_mat4_mul(model, rot, model);
+    glm_mat4_mul(normalMat, rot, normalMat);
+    
+    // Translate back
+    glm_translate_z(model, 1.5f);
+    
+    // Store result back
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (GLfloat *)model);
+    glUniformMatrix4fv(normalLoc, 1, GL_FALSE, (GLfloat *)normalMat);
+    // Redisplay scene
+    glutPostRedisplay();
 }
 
 void rotateModel(GLfloat angle) {
@@ -341,7 +383,7 @@ void initSphereProp(Vertex *vertices, GLuint *indices,
 			// Add current vertex
 			vertices[i * (N_SECTORS + 1) + j] = (Vertex) {
 				.pos = {x + cx, y + cy, z + cz},
-				.col = {1.0f, 165.0f/255.0f, 0.0f},  // orange
+				.col = {0.0f, 1.0f, 0.0f},  // green
 				.normal = {x * invLength, y * invLength, z * invLength}
 			};
 		}
@@ -619,8 +661,10 @@ int main(int argc, char *argv[]) {
 	// Close window when key 'q' is pressed
 	glutKeyboardFunc(keyPressed);
 	// Animation (rotation) function
-	glutIdleFunc(idleRotate);
-	
+	//glutIdleFunc(idleRotate);
+    // Mouse movement callbacks
+	glutMotionFunc(mouseMotion);
+    glutPassiveMotionFunc(mousePassive);
 	// Start program loop
 	glutMainLoop();
 	
